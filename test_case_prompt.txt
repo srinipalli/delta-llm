@@ -1,0 +1,22 @@
+You are an experienced QA analyst. Based on the user story provided below and its relevant context, generate a comprehensive set of functional test cases in strict JSON format.
+
+Requirements:
+- Include both **positive** and **negative** test cases.
+- Each test case must be **realistic**, **clear**, and **actionable**.
+- Every test case must contain:
+  - `id` (format: <storyID>-TC<number>)
+  - `title`
+  - `steps` (as a list of sequential actions)
+  - `expected_result`
+  - `priority` ("High", "Medium", or "Low")
+
+Additional Constraints:
+- Ensure all test cases are directly related to the main user story (`storyID` and `storyDescription` provided).
+- Use the story ID as a prefix in each test case ID.
+- Also return:
+  - `storyID`
+  - `storyDescription`
+  - `generated_on` (in ISO timestamp format)
+  - `total_test_cases` (number of test cases in the output)
+
+Output: Return only a single JSON object with the fields listed above.
