@@ -5,6 +5,7 @@ import lancedb
 import fitz
 import pyarrow as pa
 from docx import Document
+from datetime import datetime
 from sentence_transformers import SentenceTransformer
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
@@ -24,28 +25,24 @@ TABLE_NAME = "user_stories"
 os.makedirs(SUCCESS_FOLDER, exist_ok=True)
 os.makedirs(FAILURE_FOLDER, exist_ok=True)
 
-# ✅ Use guaranteed 768-dim model
 embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
 db = lancedb.connect(LANCE_DB_PATH)
 
-# ✅ Create table with test_case_content added
-try:
-    table = db.open_table(TABLE_NAME)
-    print(f"Table '{TABLE_NAME}' already exists.")
-except Exception:
-    schema = pa.schema([
-        ("vector", pa.list_(pa.float32(), 768)),
-        ("storyID", pa.string()),
-        ("storyDescription", pa.string()),
-        ("test_case_generated", pa.string()),
-        ("test_case_content", pa.string()),  # ✅ New field
-        ("filename", pa.string()),
-        ("original_path", pa.string())
-    ])
-    table = db.create_table(TABLE_NAME, schema=schema)
-    print(f"Table '{TABLE_NAME}' created.")
+# Create table if needed
+schema = pa.schema([
+    ("vector", pa.list_(pa.float32(), 768)),
+    ("storyID", pa.string()),
+    ("storyDescription", pa.string()),
+    ("test_case_content", pa.string()),
+    ("filename", pa.string()),
+    ("original_path", pa.string()),
+    ("doc_content_text", pa.string())
+])
 
-# LLM for summarizing
+table = db.create_table(TABLE_NAME, schema=schema, exist_ok=True)
+print(f"Table '{TABLE_NAME}' is ready.")
+
+# Initialize LLM
 llm = ChatGoogleGenerativeAI(
     model="models/gemini-2.0-flash",
     temperature=0.3,
@@ -69,18 +66,31 @@ def extract_text(file_path):
         print(f"❌ Error reading {file_path}: {e}")
         return None
 
-def describe_user_story(filename, text):
+def summarize_in_chunks(text, chunk_size=4000):
     try:
-        prompt = (
-            "Summarize the following document in 1-2 concise sentences. "
-            "Focus only on what the document is about and avoid unnecessary details:\n\n"
-            + text[:4000]
-        )
-        response = llm.invoke(prompt)
-        return response.content.strip()
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        summaries = []
+        for chunk in chunks[:3]:  # Limit to 3 chunks for efficiency
+            prompt = (
+                "Summarize the following document section in 1 sentence:\n\n" + chunk
+            )
+            try:
+                response = llm.invoke(prompt)
+                summaries.append(response.content.strip())
+            except Exception as e:
+                summaries.append("[Summary failed for a chunk]")
+                print(f"❌ LLM failed on a chunk: {e}")
+        return " ".join(summaries)
     except Exception as e:
-        print(f"❌ LLM summary failed for {filename}: {e}")
-        return f"Summary could not be generated for {filename}"
+        print(f"❌ LLM summary failed: {e}")
+        return "Summary could not be generated."
+
+def story_id_exists(table, story_id):
+    try:
+        result = table.to_pandas().query("storyID == @story_id")
+        return not result.empty
+    except Exception:
+        return False
 
 for file in os.listdir(UPLOAD_FOLDER):
     file_path = os.path.join(UPLOAD_FOLDER, file)
@@ -99,20 +109,31 @@ for file in os.listdir(UPLOAD_FOLDER):
 
     try:
         story_id = os.path.splitext(file)[0]
-        story_description = describe_user_story(file, text)
 
-        # ✅ Use SentenceTransformer and convert to list
-        embedding = embedding_model.encode(text).tolist()
+        if story_id_exists(table, story_id):
+            print(f"⚠️ Skipping {file} — storyID '{story_id}' already exists.")
+            shutil.move(file_path, os.path.join(FAILURE_FOLDER, file))
+            continue
+
+        story_description = summarize_in_chunks(text)
+
+        try:
+            embedding = embedding_model.encode(text).tolist()
+        except Exception as e:
+            print(f"❌ Embedding generation failed for {file}: {e}")
+            shutil.move(file_path, os.path.join(FAILURE_FOLDER, file))
+            continue
+
         print(f"🔢 Vector length: {len(embedding)} for {file}")
 
         table.add([{
             "vector": embedding,
             "storyID": story_id,
             "storyDescription": story_description,
-            "test_case_generated": "NO",
-            "test_case_content": "",  # ✅ initialize as blank
+            "test_case_content": "",
             "filename": file,
-            "original_path": file_path
+            "original_path": file_path,
+            "doc_content_text": text
         }])
 
         shutil.move(file_path, os.path.join(SUCCESS_FOLDER, file))
