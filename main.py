@@ -27,7 +27,7 @@ llm = ChatGoogleGenerativeAI(
 if __name__ == "__main__":
     # Run generation
     generated_ids = set(get_all_generated_story_ids())   
-    records = [row for row in table.search().to_list() if row["storyID"] not in generated_ids] # gets stories that have not been generated yet
+    records = [row for row in table.search().to_list() if row["storyID"] not in generated_ids] # gets stories for which test cases have not been generated yet
 
     print(f"🟡 Found {len(records)} entries to process.\n")
 
