@@ -1,0 +1,5 @@
+temp/
+testcases/
+uploaded_docs/
+.env
+_pycache_/
